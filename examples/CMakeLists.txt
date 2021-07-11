@@ -44,7 +44,7 @@ function(buildExample EXAMPLE_NAME)
 		IF(${EXAMPLE_NAME} STREQUAL "texture3d")
 			if(OpenMP_CXX_FOUND)
     			target_link_libraries(${EXAMPLE_NAME} OpenMP::OpenMP_CXX)
-			endif()	
+			endif()
 		endif()
 	endif()
 
@@ -94,7 +94,7 @@ set(EXAMPLES
 	multisampling
 	multithreading
 	multiview
-	negativeviewportheight	
+	negativeviewportheight
 	occlusionquery
 	offscreen
 	oit
@@ -112,7 +112,7 @@ set(EXAMPLES
 	raytracingbasic
 	raytracingcallable
 	raytracingreflections
-	raytracingshadows	
+	raytracingshadows
 	renderheadless
 	screenshot
 	shadowmapping
@@ -137,6 +137,7 @@ set(EXAMPLES
 	variablerateshading
 	viewportarray
 	vulkanscene
+    myComputeParticles
 )
 
 buildExamples()
