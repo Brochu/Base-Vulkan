@@ -73,4 +73,3 @@ void main()
 	if (particles[index].gradientPos.x > 1.0)
 		particles[index].gradientPos.x -= 1.0;
 }
-
