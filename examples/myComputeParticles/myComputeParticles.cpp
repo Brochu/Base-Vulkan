@@ -2,12 +2,22 @@
 
 #define VERTEX_BUFFER_BIND_ID 0
 #define ENABLE_VALIDATION false
-#define PARTICLE_COUNT 200
+#define PARTICLE_COUNT 256*1024
 
 class VulkanExample : public VulkanExampleBase
 {
 public:
+	float timer = 0.0f;
 	bool attach = false;
+	
+	vks::Buffer storageBuffer;
+
+	struct
+	{
+		VkPipelineLayout pipeLayout;
+		VkPipeline pipe;
+		VkRenderPass renderPass;
+	} graphics;
 	
 	struct Particle
 	{
@@ -32,20 +42,21 @@ public:
 			VK_FORMAT_R32G32B32_SFLOAT,
 			offsetof(Particle, color))
 	};
-	vks::Buffer storageBuffer;
-
-	VkPipelineLayout graphicsPipeLayout;
-	VkPipeline graphicsPipe;
 	
 	VulkanExample() : VulkanExampleBase(ENABLE_VALIDATION)
 	{
 		title = "Compute Shader Sync Test";
 		settings.overlay = true;
+
+		graphics = {};
 	}
 	~VulkanExample() override
 	{
 		vkDestroyBuffer(device, storageBuffer.buffer, nullptr);
-		vkDestroyPipelineLayout(device, graphicsPipeLayout, nullptr);
+		
+		vkDestroyRenderPass(device, graphics.renderPass, nullptr);
+		vkDestroyPipeline(device, graphics.pipe, nullptr);
+		vkDestroyPipelineLayout(device, graphics.pipeLayout, nullptr);
 	}
 
 	void createStorageBuffer()
@@ -55,13 +66,10 @@ public:
  
 		// Initial particle positions
 		std::vector<Particle> particleBuffer(PARTICLE_COUNT);
-		size_t count = 0;
 		for (auto &particle : particleBuffer)
 		{
 			particle.pos = glm::vec2(rndDist(rndEngine), rndDist(rndEngine));
-			particle.color = glm::vec3((float)count / PARTICLE_COUNT, (float)count / PARTICLE_COUNT, 1.f);
-			
-			count++;
+			particle.color = glm::vec3(rndDist(rndEngine), rndDist(rndEngine), rndDist(rndEngine));
 		}
  
 		VkDeviceSize storageBufferSize = particleBuffer.size() * sizeof(Particle);
@@ -94,12 +102,56 @@ public:
  
 		stagingBuffer.destroy();
 	}
+	
+	void createRenderPass()
+	{
+		VkAttachmentDescription colorAttach{};
+		colorAttach.format = swapChain.colorFormat;
+		colorAttach.samples = VK_SAMPLE_COUNT_1_BIT;
+		colorAttach.loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR;
+		colorAttach.storeOp = VK_ATTACHMENT_STORE_OP_STORE;
+		colorAttach.stencilLoadOp = VK_ATTACHMENT_LOAD_OP_DONT_CARE;
+		colorAttach.stencilStoreOp = VK_ATTACHMENT_STORE_OP_DONT_CARE;
+		colorAttach.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+		colorAttach.finalLayout = VK_IMAGE_LAYOUT_PRESENT_SRC_KHR;
+
+		VkAttachmentReference colorAttachRef{};
+		colorAttachRef.attachment = 0;
+		colorAttachRef.layout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
+
+		VkSubpassDescription subpassInfo{};
+		subpassInfo.pipelineBindPoint = VK_PIPELINE_BIND_POINT_GRAPHICS;
+		subpassInfo.colorAttachmentCount = 1;
+		subpassInfo.pColorAttachments = &colorAttachRef;
+
+		VkSubpassDependency dependency{};
+		dependency.srcSubpass = VK_SUBPASS_EXTERNAL;
+		dependency.dstSubpass = 0;
+		dependency.srcStageMask = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT;
+		dependency.srcAccessMask = 0;
+		dependency.dstStageMask = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT;
+		dependency.dstAccessMask = VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT;
+
+		auto renderPassInfo = vks::initializers::renderPassCreateInfo();
+		renderPassInfo.attachmentCount = 1;
+		renderPassInfo.pAttachments = &colorAttach;
+		renderPassInfo.subpassCount = 1;
+		renderPassInfo.pSubpasses = &subpassInfo;
+		renderPassInfo.dependencyCount = 1;
+		renderPassInfo.pDependencies = &dependency;
+
+		VK_CHECK_RESULT(vkCreateRenderPass(device, &renderPassInfo, nullptr, &graphics.renderPass));
+	}
 
 	void createGraphicsPipeline()
 	{
 		//-----------------------------------
-		auto vertShaderModule = vks::tools::loadShader("", device);
-		auto fragShaderModule = vks::tools::loadShader("", device);
+		auto vertShaderModule = vks::tools::loadShader(
+			(getShadersPath() + "myComputeParticles/myparticles.vert.spv").c_str(),
+			device);
+		auto fragShaderModule = vks::tools::loadShader(
+			(getShadersPath() + "myComputeParticles/myparticles.frag.spv").c_str(),
+			device);
 
 		VkPipelineShaderStageCreateInfo vertStageInfo = {};
 		vertStageInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
@@ -186,25 +238,80 @@ public:
 		auto dynamicInfo = vks::initializers::pipelineDynamicStateCreateInfo(dynamicStates, 2);
 
 		//-----------------------------------
-		auto pipeLayoutInfo = vks::initializers::pipelineLayoutCreateInfo(nullptr, 0);
-		pipeLayoutInfo.pushConstantRangeCount = 0;
-		pipeLayoutInfo.pPushConstantRanges = nullptr;
-		VK_CHECK_RESULT(vkCreatePipelineLayout(device, &pipeLayoutInfo, nullptr, &graphicsPipeLayout));
+		VkPushConstantRange ranges[] = {
+			vks::initializers::pushConstantRange(VK_SHADER_STAGE_VERTEX_BIT, sizeof(float), 0)
+		};
 		
-		//TODO: RenderPass
-		//TODO: Set Stages Info
-		auto pipeInfo = vks::initializers::pipelineCreateInfo(graphicsPipeLayout, 0);
-		VK_CHECK_RESULT( vkCreateGraphicsPipelines(device, VK_NULL_HANDLE, 1, &pipeInfo, nullptr, &graphicsPipe));
+		auto pipeLayoutInfo = vks::initializers::pipelineLayoutCreateInfo(nullptr, 0);
+		pipeLayoutInfo.pushConstantRangeCount = 1;
+		pipeLayoutInfo.pPushConstantRanges = ranges;
+		VK_CHECK_RESULT(vkCreatePipelineLayout(device, &pipeLayoutInfo, nullptr, &graphics.pipeLayout));
+		
+		auto pipeInfo = vks::initializers::pipelineCreateInfo(graphics.pipeLayout, graphics.renderPass);
+		// Shader stages
+		pipeInfo.stageCount = 2;
+		pipeInfo.pStages = shaderStages;
+
+		// Fixed-functions stages
+		pipeInfo.pVertexInputState = &vertexInputInfo;
+		pipeInfo.pInputAssemblyState = &inputAssemblyInfo;
+		pipeInfo.pViewportState = &viewportInfo;
+		pipeInfo.pRasterizationState = &rasterInfo;
+		pipeInfo.pMultisampleState = &multisampleInfo;
+		pipeInfo.pDepthStencilState = nullptr;
+		pipeInfo.pColorBlendState = &colorBlendInfo;
+		pipeInfo.pDynamicState = nullptr; // Could be set to the one we created?
+
+		pipeInfo.subpass = 0;
+		
+		VK_CHECK_RESULT( vkCreateGraphicsPipelines(device, VK_NULL_HANDLE, 1, &pipeInfo, nullptr, &graphics.pipe));
 		
 		//-----------------------------------
 		vkDestroyShaderModule(device, fragShaderModule, nullptr);
 		vkDestroyShaderModule(device, vertShaderModule, nullptr);
 	}
 	
+	void recordCommandBuffers()
+	{
+		for(size_t i = 0; i < drawCmdBuffers.size(); ++i)
+		{
+			auto cmdBufBeginInfo = vks::initializers::commandBufferBeginInfo();
+			cmdBufBeginInfo.flags = 0;
+			cmdBufBeginInfo.pInheritanceInfo = nullptr;
+
+			VK_CHECK_RESULT(vkBeginCommandBuffer(drawCmdBuffers[i], &cmdBufBeginInfo));
+
+			auto renderPassInfo = vks::initializers::renderPassBeginInfo();
+			renderPassInfo.renderPass = graphics.renderPass;
+			renderPassInfo.framebuffer = frameBuffers[i];
+			renderPassInfo.renderArea = vks::initializers::rect2D(width, height, 0, 0);
+			VkClearValue clearColor = {{{ 0, 0, 0, 1 }}};
+			renderPassInfo.clearValueCount = 1;
+			renderPassInfo.pClearValues = &clearColor;
+			
+			VkDeviceSize offsets[] = { 0 };
+			
+			vkCmdBeginRenderPass(drawCmdBuffers[i], &renderPassInfo, VK_SUBPASS_CONTENTS_INLINE);
+			vkCmdBindPipeline(drawCmdBuffers[i], VK_PIPELINE_BIND_POINT_GRAPHICS, graphics.pipe);
+			vkCmdBindVertexBuffers(drawCmdBuffers[i], 0, 1, &storageBuffer.buffer, offsets);
+			vkCmdPushConstants(drawCmdBuffers[i], graphics.pipeLayout, VK_SHADER_STAGE_VERTEX_BIT, 0, sizeof(float), &timer);
+			vkCmdDraw(drawCmdBuffers[i], PARTICLE_COUNT, 1, 0, 0);
+			drawUI(drawCmdBuffers[i]);
+			vkCmdEndRenderPass(drawCmdBuffers[i]);
+
+			VK_CHECK_RESULT(vkEndCommandBuffer(drawCmdBuffers[i]));
+		}
+	}
+	
 	void prepare() override
 	{
+		VulkanExampleBase::prepare();
+		
 		createStorageBuffer();
+		createRenderPass();
 		createGraphicsPipeline();
+		recordCommandBuffers();
+		
 		prepared = true;
 	}
 
@@ -212,29 +319,30 @@ public:
 	{
 		if (!prepared) return;
 		draw();
+
+		timer += frameTimer;
 	}
 
 	void draw()
 	{
 		VulkanExampleBase::prepareFrame();
 
-		VkPipelineStageFlags graphicsWaitStageMask[] = {
-			 VK_PIPELINE_STAGE_VERTEX_INPUT_BIT,
-			 VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT 
-		};
+		VkSemaphore waitSemaphores[] = { semaphores.presentComplete };
+		VkPipelineStageFlags waitStages[] = { VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT };
 		
-		VkSemaphore graphicsWaitSemaphores[] = { semaphores.presentComplete };
-		VkSemaphore graphicsSignalSemaphores[] = { semaphores.renderComplete };
+		submitInfo.waitSemaphoreCount = 1;
+		submitInfo.pWaitSemaphores = waitSemaphores;
+		submitInfo.pWaitDstStageMask = waitStages;
 
 		submitInfo.commandBufferCount = 1;
 		submitInfo.pCommandBuffers = &drawCmdBuffers[currentBuffer];
-		submitInfo.waitSemaphoreCount = 1;
-		submitInfo.pWaitSemaphores = graphicsWaitSemaphores;
-		submitInfo.pWaitDstStageMask = graphicsWaitStageMask;
-		submitInfo.signalSemaphoreCount = 1;
-		submitInfo.pSignalSemaphores = graphicsSignalSemaphores;
-		VK_CHECK_RESULT(vkQueueSubmit(queue, 1, &submitInfo, VK_NULL_HANDLE));
 
+		VkSemaphore signalSemaphores[] = { semaphores.renderComplete };
+		submitInfo.signalSemaphoreCount = 1;
+		submitInfo.pSignalSemaphores = signalSemaphores;
+
+		vkQueueSubmit(queue, 1, &submitInfo, VK_NULL_HANDLE);
+		
 		VulkanExampleBase::submitFrame();
 	}
 
