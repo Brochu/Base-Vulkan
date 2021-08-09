@@ -13,7 +13,8 @@ layout( push_constant ) uniform constants
 void main()
 {
     gl_PointSize = 1.0;
-    
+
     gl_Position = vec4(inPos, 1.0, 1.0);
-    vertColor = vec4(inColor * fract(PushConstants.timer), 1.0);
+    //vertColor = vec4(inColor * (1 - fract(PushConstants.timer), 1.0));
+    vertColor = vec4(inColor, 1);
 }

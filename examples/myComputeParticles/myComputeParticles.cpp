@@ -7,17 +7,25 @@
 class VulkanExample : public VulkanExampleBase
 {
 public:
-	float timer = 0.0f;
-	bool attach = false;
-	
 	vks::Buffer storageBuffer;
+	vks::Buffer uniBuf;
 
+	struct
+	{
+		bool attach = false;
+	} uiSettings;
+	
 	struct
 	{
 		VkPipelineLayout pipeLayout;
 		VkPipeline pipe;
 		VkRenderPass renderPass;
 	} graphics;
+
+	struct
+	{
+		glm::vec4 timeVals;
+	} uniforms;
 	
 	struct Particle
 	{
@@ -48,7 +56,9 @@ public:
 		title = "Compute Shader Sync Test";
 		settings.overlay = true;
 
+		uiSettings = {};
 		graphics = {};
+		uniforms = {};
 	}
 	~VulkanExample() override
 	{
@@ -103,6 +113,33 @@ public:
 		stagingBuffer.destroy();
 	}
 	
+	void createUniformBufObj()
+	{
+		VkDeviceSize uniformsBufferSize = sizeof(uniforms);
+
+		vulkanDevice->createBuffer(
+			VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT,
+			VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
+			&uniBuf,
+			uniformsBufferSize);
+
+		uniBuf.map();
+
+		updateUniformBufObj();
+	}
+
+	void updateUniformBufObj()
+	{
+		// Update time values we hold on CPU side
+		uniforms.timeVals.x += frameTimer;
+		uniforms.timeVals.y = uniforms.timeVals.x / 2;
+		uniforms.timeVals.z = uniforms.timeVals.x * 2;
+		uniforms.timeVals.w = uniforms.timeVals.x * 4;
+
+		// Copy CPU values to GPU memory
+		memcpy(uniBuf.mapped, &uniforms, sizeof(uniforms));
+	}
+	
 	void createRenderPass()
 	{
 		VkAttachmentDescription colorAttach{};
@@ -141,6 +178,19 @@ public:
 		renderPassInfo.pDependencies = &dependency;
 
 		VK_CHECK_RESULT(vkCreateRenderPass(device, &renderPassInfo, nullptr, &graphics.renderPass));
+	}
+	
+	void createDescriptorPool()
+	{
+		//TODO: Create descriptor pool and use member that is defined in example base
+	}
+	void createDescriptorSetLayout()
+	{
+		//TODO: Create descriptor set layout, one uniform buffer for anim purposes
+	}
+	void createDescriptorSet()
+	{
+		//TODO: Fill the descriptor set with vkWriteDescriptorSet
 	}
 
 	void createGraphicsPipeline()
@@ -238,13 +288,9 @@ public:
 		auto dynamicInfo = vks::initializers::pipelineDynamicStateCreateInfo(dynamicStates, 2);
 
 		//-----------------------------------
-		VkPushConstantRange ranges[] = {
-			vks::initializers::pushConstantRange(VK_SHADER_STAGE_VERTEX_BIT, sizeof(float), 0)
-		};
-		
 		auto pipeLayoutInfo = vks::initializers::pipelineLayoutCreateInfo(nullptr, 0);
-		pipeLayoutInfo.pushConstantRangeCount = 1;
-		pipeLayoutInfo.pPushConstantRanges = ranges;
+		pipeLayoutInfo.pushConstantRangeCount = 0;
+		pipeLayoutInfo.pPushConstantRanges = nullptr;
 		VK_CHECK_RESULT(vkCreatePipelineLayout(device, &pipeLayoutInfo, nullptr, &graphics.pipeLayout));
 		
 		auto pipeInfo = vks::initializers::pipelineCreateInfo(graphics.pipeLayout, graphics.renderPass);
@@ -294,7 +340,6 @@ public:
 			vkCmdBeginRenderPass(drawCmdBuffers[i], &renderPassInfo, VK_SUBPASS_CONTENTS_INLINE);
 			vkCmdBindPipeline(drawCmdBuffers[i], VK_PIPELINE_BIND_POINT_GRAPHICS, graphics.pipe);
 			vkCmdBindVertexBuffers(drawCmdBuffers[i], 0, 1, &storageBuffer.buffer, offsets);
-			vkCmdPushConstants(drawCmdBuffers[i], graphics.pipeLayout, VK_SHADER_STAGE_VERTEX_BIT, 0, sizeof(float), &timer);
 			vkCmdDraw(drawCmdBuffers[i], PARTICLE_COUNT, 1, 0, 0);
 			drawUI(drawCmdBuffers[i]);
 			vkCmdEndRenderPass(drawCmdBuffers[i]);
@@ -308,7 +353,11 @@ public:
 		VulkanExampleBase::prepare();
 		
 		createStorageBuffer();
+		createUniformBufObj();
 		createRenderPass();
+		createDescriptorPool();
+		createDescriptorSetLayout();
+		createDescriptorSet();
 		createGraphicsPipeline();
 		recordCommandBuffers();
 		
@@ -318,9 +367,9 @@ public:
 	void render() override
 	{
 		if (!prepared) return;
+		
 		draw();
-
-		timer += frameTimer;
+		updateUniformBufObj();
 	}
 
 	void draw()
@@ -350,7 +399,7 @@ public:
 	{
 		if (overlay->header("Settings"))
 		{
-			overlay->checkBox("Attach?", &attach);
+			overlay->checkBox("Attach?", &uiSettings.attach);
 		}
 	}
 };
