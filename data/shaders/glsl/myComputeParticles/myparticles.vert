@@ -5,16 +5,24 @@ layout (location = 1) in vec3 inColor;
 
 layout (location = 0) out vec4 vertColor;
 
-layout( push_constant ) uniform constants
+layout(std140, binding=0) uniform time
 {
-    float timer;
-} PushConstants;
+    vec4 values;
+} Time;
+
+float rand(vec2 co)
+{
+    return fract(sin(dot(co, vec2(12.9898, 78.233))) * 43758.5453);
+}
 
 void main()
 {
     gl_PointSize = 1.0;
 
     gl_Position = vec4(inPos, 1.0, 1.0);
-    //vertColor = vec4(inColor * (1 - fract(PushConstants.timer), 1.0));
-    vertColor = vec4(inColor, 1);
+    
+    float r = rand(inPos * Time.values.y);
+    float g = rand(inColor.rg * Time.values.y);
+    float b = rand(inColor.gb * Time.values.y);
+    vertColor = vec4(r, g, b, 1);
 }

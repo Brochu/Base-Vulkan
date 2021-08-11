@@ -20,6 +20,9 @@ public:
 		VkPipelineLayout pipeLayout;
 		VkPipeline pipe;
 		VkRenderPass renderPass;
+
+		VkDescriptorSetLayout descSetLayout;
+		VkDescriptorSet descSet;
 	} graphics;
 
 	struct
@@ -63,6 +66,7 @@ public:
 	~VulkanExample() override
 	{
 		vkDestroyBuffer(device, storageBuffer.buffer, nullptr);
+		vkDestroyBuffer(device, uniBuf.buffer, nullptr);
 		
 		vkDestroyRenderPass(device, graphics.renderPass, nullptr);
 		vkDestroyPipeline(device, graphics.pipe, nullptr);
@@ -182,15 +186,46 @@ public:
 	
 	void createDescriptorPool()
 	{
-		//TODO: Create descriptor pool and use member that is defined in example base
+		std::vector<VkDescriptorPoolSize> poolSizes = {
+				vks::initializers::descriptorPoolSize(VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, 1),
+		};
+
+		auto descPoolInfo = vks::initializers::descriptorPoolCreateInfo(
+			static_cast<uint32_t>(poolSizes.size()),
+			poolSizes.data(),
+			1);
+
+		VK_CHECK_RESULT(vkCreateDescriptorPool(device, &descPoolInfo, nullptr, &descriptorPool));
 	}
 	void createDescriptorSetLayout()
 	{
-		//TODO: Create descriptor set layout, one uniform buffer for anim purposes
+		std::vector<VkDescriptorSetLayoutBinding> descSetBindings = {
+			vks::initializers::descriptorSetLayoutBinding(VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, VK_SHADER_STAGE_VERTEX_BIT, 0),
+		};
+		
+		auto descSetLayoutInfo = vks::initializers::descriptorSetLayoutCreateInfo(
+			descSetBindings.data(),
+			static_cast<uint32_t>(descSetBindings.size()));
+
+		VK_CHECK_RESULT(vkCreateDescriptorSetLayout(device, &descSetLayoutInfo, nullptr, &graphics.descSetLayout));
 	}
+	
 	void createDescriptorSet()
 	{
-		//TODO: Fill the descriptor set with vkWriteDescriptorSet
+		auto descSetAllocInfo = vks::initializers::descriptorSetAllocateInfo(
+			descriptorPool,
+			&graphics.descSetLayout,
+			1);
+		
+		VK_CHECK_RESULT(vkAllocateDescriptorSets(device, &descSetAllocInfo, &graphics.descSet));
+
+		VkWriteDescriptorSet writeSet = vks::initializers::writeDescriptorSet(
+			graphics.descSet,
+			VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER,
+			0,
+			&uniBuf.descriptor);
+
+		vkUpdateDescriptorSets(device, 1, &writeSet, 0, nullptr);
 	}
 
 	void createGraphicsPipeline()
@@ -288,7 +323,7 @@ public:
 		auto dynamicInfo = vks::initializers::pipelineDynamicStateCreateInfo(dynamicStates, 2);
 
 		//-----------------------------------
-		auto pipeLayoutInfo = vks::initializers::pipelineLayoutCreateInfo(nullptr, 0);
+		auto pipeLayoutInfo = vks::initializers::pipelineLayoutCreateInfo(&graphics.descSetLayout, 1);
 		pipeLayoutInfo.pushConstantRangeCount = 0;
 		pipeLayoutInfo.pPushConstantRanges = nullptr;
 		VK_CHECK_RESULT(vkCreatePipelineLayout(device, &pipeLayoutInfo, nullptr, &graphics.pipeLayout));
@@ -340,6 +375,7 @@ public:
 			vkCmdBeginRenderPass(drawCmdBuffers[i], &renderPassInfo, VK_SUBPASS_CONTENTS_INLINE);
 			vkCmdBindPipeline(drawCmdBuffers[i], VK_PIPELINE_BIND_POINT_GRAPHICS, graphics.pipe);
 			vkCmdBindVertexBuffers(drawCmdBuffers[i], 0, 1, &storageBuffer.buffer, offsets);
+			vkCmdBindDescriptorSets(drawCmdBuffers[i], VK_PIPELINE_BIND_POINT_GRAPHICS, graphics.pipeLayout, 0, 1, &graphics.descSet, 0, nullptr);
 			vkCmdDraw(drawCmdBuffers[i], PARTICLE_COUNT, 1, 0, 0);
 			drawUI(drawCmdBuffers[i]);
 			vkCmdEndRenderPass(drawCmdBuffers[i]);
